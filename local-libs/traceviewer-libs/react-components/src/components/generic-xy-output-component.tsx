@@ -30,9 +30,9 @@ import {
     panRange,
     setSpinnerVisible,
     rowsToCsv,
-    computeYRange
+    computeYRange,
+    normalizeCheckedSeries
 } from './utils/xy-shared';
-import { parse } from '@fortawesome/fontawesome-svg-core';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faSpinner } from '@fortawesome/free-solid-svg-icons';
 
@@ -109,9 +109,12 @@ export class GenericXYOutputComponent extends AbstractTreeOutputComponent<Generi
     private readonly timelineHeight = 30;
 
     private mouseIsDown = false;
+    private isMouseLeave = true;
     private isPanning = false;
     private isSelecting = false;
     private positionXMove = 0;
+    private posPixelSelect = 0;
+    private startPositionMouseLeftClick = BigInt(0);
     private startPositionMouseRightClick = BigInt(0);
 
     private resolution = 0;
@@ -184,7 +187,7 @@ export class GenericXYOutputComponent extends AbstractTreeOutputComponent<Generi
             if (i >= 0) checked.splice(i, 1);
             else checked.push(id);
         });
-        this.setState({ checkedSeries: checked }, () => {
+        this.setState({ checkedSeries: normalizeCheckedSeries(this.state.xyTree, checked) }, () => {
             if (this.getChartWidth() > 0) this._debouncedUpdateXY();
         });
     };
@@ -626,15 +629,23 @@ export class GenericXYOutputComponent extends AbstractTreeOutputComponent<Generi
         return { left, width };
     }
 
-    private endSelection = (_e: MouseEvent): void => {
+    private endSelection = (event: MouseEvent): void => {
+        const hasDragged = Math.abs(event.screenX - this.posPixelSelect) > 1;
         if (this.clickedMouseButton === 2) {
             // Right-click
-            if (this.isTimeAxis) {
+            if (this.isTimeAxis && hasDragged) {
                 // zooming is disabled for non-time x-axis
                 const newStart = this.startPositionMouseRightClick;
                 const newEnd = this.getTimeForX(this.positionXMove);
                 this.updateViewRange(newStart, newEnd);
+            } else if (this.isTimeAxis) {
+                this.props.unitController.selectionRange = undefined;
             }
+        } else if (this.clickedMouseButton === 0 && this.isTimeAxis && !hasDragged && !event.shiftKey && !event.ctrlKey) {
+            this.props.unitController.selectionRange = {
+                start: this.startPositionMouseLeftClick,
+                end: this.startPositionMouseLeftClick
+            };
         }
         this.mouseIsDown = false;
         this.isSelecting = false;
@@ -647,6 +658,7 @@ export class GenericXYOutputComponent extends AbstractTreeOutputComponent<Generi
     private onMouseDown = (ev: React.MouseEvent<HTMLDivElement, MouseEvent>): void => {
         this.mouseIsDown = true;
         this.clickedMouseButton = ev.button;
+        this.posPixelSelect = ev.nativeEvent.screenX;
         const startTime = this.getTimeForX(ev.nativeEvent.offsetX);
         if (this.clickedMouseButton === 2) {
             // Right-click
@@ -657,6 +669,9 @@ export class GenericXYOutputComponent extends AbstractTreeOutputComponent<Generi
                 this.startPositionMouseRightClick = startTime;
             }
         } else {
+            if (this.clickedMouseButton === 0) {
+                this.startPositionMouseLeftClick = startTime;
+            }
             if (
                 (ev.ctrlKey && !ev.shiftKey) ||
                 (!(ev.shiftKey && ev.ctrlKey) && this.clickedMouseButton === 1) // Middle-click
@@ -675,24 +690,37 @@ export class GenericXYOutputComponent extends AbstractTreeOutputComponent<Generi
                 this.isPanning = true;
                 this.setState({ cursor: 'grabbing' });
             }
-            // TODO: Left-click selection feature is not implemented yet.
             this.onMouseMove(ev);
         }
         document.addEventListener('mouseup', this.endSelection);
     };
 
     private onMouseMove = (ev: React.MouseEvent): void => {
+        this.isMouseLeave = false;
         this.positionXMove = ev.nativeEvent.offsetX;
         if (this.mouseIsDown) {
             if (this.isPanning) this.panHorizontally(ev);
             else if (this.isSelecting) this.updateSelection();
-            else this.forceUpdate();
+            else if (
+                this.clickedMouseButton === 0 &&
+                this.isTimeAxis &&
+                Math.abs(ev.nativeEvent.screenX - this.posPixelSelect) > 1
+            ) {
+                this.isSelecting = true;
+                this.props.unitController.selectionRange = {
+                    start: this.startPositionMouseLeftClick,
+                    end: this.getTimeForX(this.positionXMove)
+                };
+            } else this.forceUpdate();
         } else {
             this.tooltip();
         }
+        this.emitCursor();
+        this.forceUpdate();
     };
 
     private onMouseLeave = (ev: React.MouseEvent): void => {
+        this.isMouseLeave = true;
         const chartWidth = this.getChartWidth();
         this.positionXMove = Math.max(0, Math.min(ev.nativeEvent.offsetX, chartWidth));
         this.forceUpdate();
@@ -700,8 +728,44 @@ export class GenericXYOutputComponent extends AbstractTreeOutputComponent<Generi
             // Not Right-click
             this.updateSelection();
         }
+        signalManager().emit('SIGNAL_LANE_CURSOR_UPDATED', { visible: false });
         this.closeTooltip?.();
     };
+
+    private emitCursor(): void {
+        if (!this.isTimeAxis) {
+            return;
+        }
+        const time = this.getTimeForX(this.positionXMove);
+        signalManager().emit('SIGNAL_LANE_CURSOR_UPDATED', {
+            visible: true,
+            x: this.positionXMove,
+            time,
+            plotLeft: 0,
+            plotWidth: this.getChartWidth()
+        });
+    }
+
+    private renderCursorOverlay(): React.ReactNode {
+        if (this.isMouseLeave || !this.isTimeAxis || !this.state.xyData?.datasets?.length) {
+            return undefined;
+        }
+        const { left, width } = this.getPlotGeom();
+        const x = Math.max(left, Math.min(this.positionXMove, left + width));
+        return (
+            <div
+                style={{
+                    position: 'absolute',
+                    left: x,
+                    top: 0,
+                    height: parseInt(String(this.props.style.height)) - this.timelineHeight,
+                    borderLeft: '1px solid #259fd8',
+                    pointerEvents: 'none',
+                    zIndex: 20
+                }}
+            />
+        );
+    }
 
     private onWheel = (wheel: React.WheelEvent): void => {
         if (this.isTimeAxis) {
@@ -1119,6 +1183,7 @@ export class GenericXYOutputComponent extends AbstractTreeOutputComponent<Generi
                     ref={this.divRef}
                 >
                     {this.chooseReactChart()}
+                    {this.renderCursorOverlay()}
                     {this.state.outputStatus === ResponseStatus.RUNNING && (
                         <div
                             id={this.props.traceId + this.props.outputDescriptor.id + 'focusContainer'}

@@ -20,15 +20,15 @@ test('Open Trace from Trace Viewer', async ({ page }) => {
     // Locate the welcome view button or the open traces view (when trace exists already)
     const index = await waitForFirstLocator([
         page.getByLabel('Opened Traces Section'),
-        page.getByRole('button', { name: 'Open Trace' })
+        page.getByRole('button', { name: /Open Trace/ })
     ]);
 
     if (index === 0) {
         await page.getByLabel('Opened Traces Section').hover();
     }
 
-    await page.getByRole('button', { name: 'Open Trace' }).hover();
-    await page.getByRole('button', { name: 'Open Trace' }).click();
+    await page.getByRole('button', { name: /Open Trace/ }).hover();
+    await page.getByRole('button', { name: /Open Trace/ }).click();
     await page.getByRole('option', { name: 'Folder' }).locator('a').click();
     await page.getByRole('option', { name: '202-bug-hunt' }).locator('a').click();
     await page.getByRole('option', { name: 'cat-kernel' }).locator('a').click();

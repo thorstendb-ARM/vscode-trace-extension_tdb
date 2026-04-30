@@ -9,6 +9,7 @@ import { ContextMenuContributedSignalPayload } from './context-menu-contributed-
 import { ContextMenuItemClickedSignalPayload } from './context-menu-item-clicked-signal-payload';
 import { RowSelectionsChangedSignalPayload } from './row-selections-changed-signal-payload';
 import { ItemPropertiesSignalPayload } from './item-properties-signal-payload';
+import { XmlViewMetadataPayload } from './xml-view-metadata';
 
 export interface Signals {
     TRACE_OPENED: [trace: Trace];
@@ -46,8 +47,12 @@ export interface Signals {
     SELECTION_RANGE_UPDATED: [payload: TimeRangeUpdatePayload];
     REQUEST_SELECTION_RANGE_CHANGE: [payload: TimeRangeUpdatePayload];
     OUTPUT_DATA_CHANGED: [descriptors: OutputDescriptor[]];
+    XML_VIEW_METADATA_UPDATED: [payload: XmlViewMetadataPayload];
     CONTRIBUTE_CONTEXT_MENU: [payload: ContextMenuContributedSignalPayload];
     CONTEXT_MENU_ITEM_CLICKED: [payload: ContextMenuItemClickedSignalPayload];
+    SIGNAL_LANE_CURSOR_UPDATED: [
+        payload: { visible: boolean; x?: number; time?: bigint; plotLeft?: number; plotWidth?: number }
+    ];
 }
 
 export type SignalType = keyof Signals;

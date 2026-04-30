@@ -10,8 +10,11 @@ import { TspClientProvider } from 'vscode-trace-common/lib/client/tsp-client-pro
 import {
     experimentSelected,
     setTspClient,
-    traceServerUrlChanged
+    traceServerStarted,
+    traceServerUrlChanged,
+    xmlViewMetadataUpdated
 } from 'vscode-trace-common/lib/messages/vscode-messages';
+import { XmlViewMetadata } from 'traceviewer-base/lib/signals/xml-view-metadata';
 import { CustomizationConfigObject, CustomizationSubmission } from 'vscode-trace-common/lib/types/customization';
 import { messenger } from '.';
 import { VsCodeMessageManager } from '../../common/vscode-message-manager';
@@ -22,6 +25,7 @@ import { OutputConfigurationQuery, OutputDescriptor } from 'tsp-typescript-clien
 interface AvailableViewsAppState {
     tspClientProvider: TspClientProvider | undefined;
     experiment: Experiment | undefined;
+    xmlViewMetadata: XmlViewMetadata[];
 }
 
 class TraceExplorerViewsWidget extends React.Component<{}, AvailableViewsAppState> {
@@ -54,17 +58,28 @@ class TraceExplorerViewsWidget extends React.Component<{}, AvailableViewsAppStat
         }
     };
 
+    private _onVscodeServerStarted = (): void => {
+        signalManager().emit('TRACE_SERVER_STARTED');
+    };
+
+    private _onVscodeXmlViewMetadataUpdated = (data: { views?: XmlViewMetadata[] }): void => {
+        this.setState({ xmlViewMetadata: data?.views ?? [] });
+    };
+
     constructor(props: {}) {
         super(props);
         this.state = {
             tspClientProvider: undefined,
-            experiment: undefined
+            experiment: undefined,
+            xmlViewMetadata: []
         };
 
         this._signalHandler = new VsCodeMessageManager(messenger);
         messenger.onNotification(setTspClient, this._onVscodeSetTspClient);
         messenger.onNotification(experimentSelected, this._onVscodeExperimentSelected);
+        messenger.onNotification(traceServerStarted, this._onVscodeServerStarted);
         messenger.onNotification(traceServerUrlChanged, this._onVscodeUrlChanged);
+        messenger.onNotification(xmlViewMetadataUpdated, this._onVscodeXmlViewMetadataUpdated);
     }
 
     componentDidMount(): void {
@@ -134,6 +149,7 @@ class TraceExplorerViewsWidget extends React.Component<{}, AvailableViewsAppStat
                         id={TraceExplorerViewsWidget.ID}
                         title={TraceExplorerViewsWidget.LABEL}
                         tspClientProvider={this.state.tspClientProvider}
+                        xmlViewMetadata={this.state.xmlViewMetadata}
                         onCustomizationClick={this.handleOutputCustomization}
                     ></ReactAvailableViewsWidget>
                 )}

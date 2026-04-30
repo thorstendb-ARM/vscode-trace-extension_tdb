@@ -27,6 +27,7 @@ import {
     computeYRange,
     getTimeForX as timeForX,
     getXForTime as xForTime,
+    normalizeCheckedSeries,
     zoomRange,
     panRange,
     setSpinnerVisible
@@ -122,11 +123,28 @@ export abstract class AbstractXYOutputComponent<
 
     // Positions
     protected positionXMove = 0;
+    protected startPositionMouseLeftClick = BigInt(0);
     protected startPositionMouseRightClick = BigInt(0);
 
     protected endSelection = (event: MouseEvent): void => {
+        const hasDragged = Math.abs(event.screenX - this.posPixelSelect) > 1;
         if (this.clickedMouseButton === MouseButton.RIGHT) {
-            this.applySelectionZoom();
+            if (!this.supportsPointSelectionMarker() || hasDragged) {
+                this.applySelectionZoom();
+            } else {
+                this.props.unitController.selectionRange = undefined;
+            }
+        } else if (
+            this.supportsPointSelectionMarker() &&
+            this.clickedMouseButton === MouseButton.LEFT &&
+            !hasDragged &&
+            !event.shiftKey &&
+            !event.ctrlKey
+        ) {
+            this.props.unitController.selectionRange = {
+                start: this.startPositionMouseLeftClick,
+                end: this.startPositionMouseLeftClick
+            };
         }
 
         this.mouseIsDown = false;
@@ -181,6 +199,14 @@ export abstract class AbstractXYOutputComponent<
      */
     protected abstract getZoomTime(): bigint;
 
+    protected isCanvasBackedChart(): boolean {
+        return this.isBarPlot;
+    }
+
+    protected supportsPointSelectionMarker(): boolean {
+        return false;
+    }
+
     protected onToggleCollapse(id: number): void {
         let newList = [...this.state.collapsedNodes];
 
@@ -195,8 +221,26 @@ export abstract class AbstractXYOutputComponent<
     }
 
     protected onOrderChange(ids: number[]): void {
-        const ordered = this.state.xyTree.slice().sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
-        this.setState({ xyTree: ordered });
+        const ordered = this.state.xyTree.slice().sort((a, b) => {
+            const aIndex = ids.indexOf(a.id);
+            const bIndex = ids.indexOf(b.id);
+            if (aIndex === -1 && bIndex === -1) {
+                return 0;
+            }
+            if (aIndex === -1) {
+                return 1;
+            }
+            if (bIndex === -1) {
+                return -1;
+            }
+            return aIndex - bIndex;
+        });
+        const checkedSet = new Set(this.state.checkedSeries);
+        const checkedSeries = normalizeCheckedSeries(
+            ordered,
+            ordered.filter(entry => checkedSet.has(entry.id)).map(entry => entry.id)
+        );
+        this.setState({ xyTree: ordered, checkedSeries });
     }
 
     protected onOrderReset(): void {
@@ -214,7 +258,7 @@ export abstract class AbstractXYOutputComponent<
                 newList = newList.concat(id);
             }
         });
-        this.setState({ checkedSeries: newList });
+        this.setState({ checkedSeries: normalizeCheckedSeries(this.state.xyTree, newList) });
     }
 
     private updateRange(rangeStart: bigint, rangeEnd: bigint): void {
@@ -279,9 +323,9 @@ export abstract class AbstractXYOutputComponent<
                 this.divRef.current.addEventListener('wheel', this.preventDefaultHandler);
             }
 
-            if (this.isBarPlot) {
+            if (this.isCanvasBackedChart()) {
                 this.renderChart();
-            } else {
+            } else if (this.chartRef.current.chartInstance) {
                 this.chartRef.current.chartInstance.render();
             }
         }
@@ -302,7 +346,7 @@ export abstract class AbstractXYOutputComponent<
         const treeResponse = tspClientResponse.getModel();
         if (tspClientResponse.isOk() && treeResponse) {
             if (treeResponse.model) {
-                const built = buildTreeStateFromModel(treeResponse.model as any);
+                const built = buildTreeStateFromModel(treeResponse.model as any, this.shouldSelectAllSeriesByDefault());
                 this.setState(
                     {
                         outputStatus: treeResponse.status,
@@ -329,6 +373,10 @@ export abstract class AbstractXYOutputComponent<
         });
         this.viewSpinner(false);
         return ResponseStatus.FAILED;
+    }
+
+    protected shouldSelectAllSeriesByDefault(): boolean {
+        return false;
     }
 
     renderTree(): React.ReactNode | undefined {
@@ -467,7 +515,7 @@ export abstract class AbstractXYOutputComponent<
         const dataSetArray = new Array<any>();
         let xValues: bigint[] = [];
         const offset = this.props.viewRange.getOffset() ?? BigInt(0);
-        seriesObj.forEach(series => {
+        this.sortSeriesByCheckedOrder(seriesObj).forEach(series => {
             const color = this.getSeriesColor(series.seriesName);
             xValues = series.xValues as bigint[];
             const yValues: number[] = series.yValues;
@@ -481,6 +529,7 @@ export abstract class AbstractXYOutputComponent<
             const process: Entry[] = this.state.xyTree.filter(element => element.id === series.seriesId);
 
             dataSetArray.push({
+                seriesId: series.seriesId,
                 label: process[0].labels[0],
                 data: pairs,
                 backgroundColor: color,
@@ -507,10 +556,11 @@ export abstract class AbstractXYOutputComponent<
     private buildXYData(seriesObj: XYSeries[]) {
         const dataSetArray = new Array<any>();
         let xValues: bigint[] = [];
-        seriesObj.forEach(series => {
+        this.sortSeriesByCheckedOrder(seriesObj).forEach(series => {
             const color = this.getSeriesColor(series.seriesName);
             xValues = series.xValues as bigint[];
             dataSetArray.push({
+                seriesId: series.seriesId,
                 label: series.seriesName,
                 fill: false,
                 borderColor: color,
@@ -530,6 +580,15 @@ export abstract class AbstractXYOutputComponent<
         });
 
         this.calculateYRange();
+    }
+
+    private sortSeriesByCheckedOrder(seriesObj: XYSeries[]): XYSeries[] {
+        const order = new Map(this.state.checkedSeries.map((id, index) => [id, index]));
+        return [...seriesObj].sort((a, b) => {
+            const aIndex = order.get(a.seriesId) ?? Number.MAX_SAFE_INTEGER;
+            const bIndex = order.get(b.seriesId) ?? Number.MAX_SAFE_INTEGER;
+            return aIndex - bIndex;
+        });
     }
 
     private getSeriesColor(key: string): string {
@@ -576,8 +635,8 @@ export abstract class AbstractXYOutputComponent<
         if (this.props.unitController.numberTranslator) {
             timeLabel = this.props.unitController.numberTranslator(timeForXVal) + ' s';
         }
-        const chartWidth = this.isBarPlot ? this.getChartWidth() : this.chartRef.current.chartInstance.width;
-        const chartHeight = this.isBarPlot
+        const chartWidth = this.isCanvasBackedChart() ? this.getChartWidth() : this.chartRef.current.chartInstance.width;
+        const chartHeight = this.isCanvasBackedChart()
             ? parseInt(this.props.style.height.toString())
             : this.chartRef.current.chartInstance.height;
         const arraySize = this.state.xyData.labels.length;

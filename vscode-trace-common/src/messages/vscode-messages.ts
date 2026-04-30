@@ -1,5 +1,6 @@
 /* eslint-disable  @typescript-eslint/no-explicit-any */
 import type { MessageParticipant, NotificationType, RequestType } from 'vscode-messenger-common';
+import type { XmlViewMetadataPayload } from 'traceviewer-base/lib/signals/xml-view-metadata';
 import { CustomizationConfigObject, CustomizationSubmission } from '../types/customization';
 export const VSCODE_MESSAGES = {
     ADD_OUTPUT: 'add-output',
@@ -49,6 +50,7 @@ export const VSCODE_MESSAGES = {
     RESTORE_VIEW: 'restoreView',
     RESTORE_COMPLETE: 'restoreComplete',
     OUTPUT_DATA_CHANGED: 'outputDataChanged',
+    XML_VIEW_METADATA_UPDATED: 'xmlViewMetadataUpdated',
     CONTRIBUTE_CONTEXT_MENU: 'contributeContextMenu',
     CONTEXT_MENU_ITEM_CLICKED: 'contextMenuItemClicked',
     SOURCE_LOOKUP: 'sourceLookup',
@@ -95,6 +97,9 @@ export const updateMarkerCategoryState: NotificationType<any> = {
 };
 export const updateMarkerSetState: NotificationType<any> = { method: VSCODE_MESSAGES.UPDATE_MARKER_SET_STATE };
 export const outputDataChanged: NotificationType<any> = { method: VSCODE_MESSAGES.OUTPUT_DATA_CHANGED };
+export const xmlViewMetadataUpdated: NotificationType<XmlViewMetadataPayload> = {
+    method: VSCODE_MESSAGES.XML_VIEW_METADATA_UPDATED
+};
 export const contributeContextMenu: NotificationType<any> = { method: VSCODE_MESSAGES.CONTRIBUTE_CONTEXT_MENU };
 export const updateProperties: NotificationType<any> = { method: VSCODE_MESSAGES.UPDATE_PROPERTIES };
 export const rowSelectionChanged: NotificationType<any> = { method: VSCODE_MESSAGES.ROW_SELECTION_CHANGED };
