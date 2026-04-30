@@ -51,6 +51,11 @@ import {
 import { ContextMenuItemClickedSignalPayload } from 'traceviewer-base/lib/signals/context-menu-item-clicked-signal-payload';
 import { RowSelectionsChangedSignalPayload } from 'traceviewer-base/lib/signals/row-selections-changed-signal-payload';
 import { ItemPropertiesSignalPayload } from 'traceviewer-base/lib/signals/item-properties-signal-payload';
+import { XmlViewMetadata, XmlViewStateValue } from 'traceviewer-base/lib/signals/xml-view-metadata';
+
+interface XmlConfiguredOutputDescriptor extends OutputDescriptor {
+    traceViewerXmlViewMetadata?: XmlViewMetadata;
+}
 
 export type AbstractGanttOutputProps = AbstractOutputProps & {
     menu_id: string;
@@ -109,6 +114,11 @@ export abstract class AbstractGanttOutputComponent<
 
     private selectedElement: TimeGraphStateComponent | undefined;
     private selectedMarkerCategories: string[] | undefined = undefined;
+    private pointerDownButton = -1;
+    private pointerDownScreenX = 0;
+    private pointerDownTime = BigInt(0);
+    private chartCursorVisible = false;
+    private chartCursorX = 0;
     protected onSelectionChanged = (payload: { [key: string]: string }) => this.doHandleSelectionChangedSignal(payload);
     protected onOutputDataChanged = (outputs: OutputDescriptor[]) => this.doHandleOutputDataChangedSignal(outputs);
     protected onContextMenuContributed = (payload: ContextMenuContributedSignalPayload) =>
@@ -948,37 +958,118 @@ export abstract class AbstractGanttOutputComponent<
         const selectionRange = new TimeGraphChartSelectionRange('chart-selection-range', {
             color: this.props.style.cursorColor
         });
+        const height =
+            parseInt(this.props.style.height.toString()) -
+            this.state.marginTop -
+            this.getMarkersLayerHeight() -
+            (document.getElementById(this.props.traceId + this.props.outputDescriptor.id + 'searchBar')?.offsetHeight ??
+                0);
+        const width = this.getChartWidth();
         return (
-            <ReactTimeGraphContainer
-                ref={this.containerRef}
-                options={{
-                    id: this.props.traceId + this.props.outputDescriptor.id + 'focusContainer',
-                    height:
-                        parseInt(this.props.style.height.toString()) -
-                        this.state.marginTop -
-                        this.getMarkersLayerHeight() -
-                        (document.getElementById(this.props.traceId + this.props.outputDescriptor.id + 'searchBar')
-                            ?.offsetHeight ?? 0),
-                    width: this.getChartWidth(),
-                    backgroundColor: this.props.style.chartBackgroundColor,
-                    lineColor: this.props.backgroundTheme === 'light' ? 0xdddddd : 0x34383c,
-                    classNames: 'horizontal-canvas',
-                    forceCanvasRenderer: false // default, but adds clarity
-                }}
-                addWidgetResizeHandler={this.props.addWidgetResizeHandler}
-                removeWidgetResizeHandler={this.props.removeWidgetResizeHandler}
-                unitController={this.props.unitController}
-                id={this.props.traceId + this.props.outputDescriptor.id + 'focusContainer'}
-                layers={[
-                    grid,
-                    this.chartLayer,
-                    selectionRange,
-                    this.chartCursors,
-                    this.arrowLayer,
-                    this.rangeEventsLayer
-                ]}
-            />
+            <div
+                onMouseDown={event => this.handleChartMouseDown(event)}
+                onMouseMove={event => this.handleChartMouseMove(event)}
+                onMouseLeave={() => this.handleChartMouseLeave()}
+                onMouseUp={event => this.handleChartMouseUp(event)}
+                onContextMenu={event => event.preventDefault()}
+                style={{ width, height, position: 'relative' }}
+            >
+                <ReactTimeGraphContainer
+                    ref={this.containerRef}
+                    options={{
+                        id: this.props.traceId + this.props.outputDescriptor.id + 'focusContainer',
+                        height,
+                        width,
+                        backgroundColor: this.props.style.chartBackgroundColor,
+                        lineColor: this.props.backgroundTheme === 'light' ? 0xdddddd : 0x34383c,
+                        classNames: 'horizontal-canvas',
+                        forceCanvasRenderer: false // default, but adds clarity
+                    }}
+                    addWidgetResizeHandler={this.props.addWidgetResizeHandler}
+                    removeWidgetResizeHandler={this.props.removeWidgetResizeHandler}
+                    unitController={this.props.unitController}
+                    id={this.props.traceId + this.props.outputDescriptor.id + 'focusContainer'}
+                    layers={[
+                        grid,
+                        this.chartLayer,
+                        selectionRange,
+                        this.chartCursors,
+                        this.arrowLayer,
+                        this.rangeEventsLayer
+                    ]}
+                />
+                {this.chartCursorVisible && (
+                    <div
+                        style={{
+                            position: 'absolute',
+                            left: this.chartCursorX,
+                            top: 0,
+                            height,
+                            borderLeft: '1px solid #259fd8',
+                            pointerEvents: 'none',
+                            zIndex: 20
+                        }}
+                    />
+                )}
+            </div>
         );
+    }
+
+    private handleChartMouseDown(event: React.MouseEvent<HTMLDivElement, MouseEvent>): void {
+        this.pointerDownButton = event.button;
+        this.pointerDownScreenX = event.nativeEvent.screenX;
+        this.pointerDownTime = this.getTimeForChartMouseEvent(event);
+    }
+
+    private handleChartMouseMove(event: React.MouseEvent<HTMLDivElement, MouseEvent>): void {
+        this.emitChartCursor(event);
+        this.forceUpdate();
+    }
+
+    private handleChartMouseLeave(): void {
+        this.chartCursorVisible = false;
+        signalManager().emit('SIGNAL_LANE_CURSOR_UPDATED', { visible: false });
+        this.forceUpdate();
+    }
+
+    private handleChartMouseUp(event: React.MouseEvent<HTMLDivElement, MouseEvent>): void {
+        if (Math.abs(event.nativeEvent.screenX - this.pointerDownScreenX) > 1) {
+            return;
+        }
+        if (this.pointerDownButton === 0 && !event.shiftKey && !event.ctrlKey) {
+            this.props.unitController.selectionRange = {
+                start: this.pointerDownTime,
+                end: this.pointerDownTime
+            };
+        } else if (this.pointerDownButton === 2) {
+            this.props.unitController.selectionRange = undefined;
+        }
+    }
+
+    private emitChartCursor(event: React.MouseEvent<HTMLDivElement, MouseEvent>): void {
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const x = Math.max(0, Math.min(event.clientX - bounds.left, bounds.width));
+        this.chartCursorVisible = true;
+        this.chartCursorX = x;
+        signalManager().emit('SIGNAL_LANE_CURSOR_UPDATED', {
+            visible: true,
+            x,
+            time: this.getTimeForChartX(x, bounds.width),
+            plotLeft: 0,
+            plotWidth: bounds.width
+        });
+    }
+
+    private getTimeForChartMouseEvent(event: React.MouseEvent<HTMLDivElement, MouseEvent>): bigint {
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const x = Math.max(0, Math.min(event.clientX - bounds.left, bounds.width));
+        return this.getTimeForChartX(x, bounds.width);
+    }
+
+    private getTimeForChartX(x: number, width: number): bigint {
+        const viewRange = this.props.unitController.viewRange;
+        const ratio = Math.max(0, Math.min(1, x / Math.max(1, width)));
+        return viewRange.start + BigInt(Math.round(Number(viewRange.end - viewRange.start) * ratio));
     }
 
     setFocus(): void {
@@ -1082,7 +1173,8 @@ export abstract class AbstractGanttOutputComponent<
 
         rows = rows.map((row, index) => ({
             ...row,
-            id: ids[index]
+            id: ids[index],
+            states: row.states.map(state => this.withXmlStateLabel(state))
         }));
 
         let emptyNodes: number[] = [...this.state.emptyNodes];
@@ -1308,6 +1400,40 @@ export abstract class AbstractGanttOutputComponent<
         return this.getStateStyle(state);
     }
 
+    private getXmlViewMetadata(): XmlViewMetadata | undefined {
+        return (this.props.outputDescriptor as XmlConfiguredOutputDescriptor).traceViewerXmlViewMetadata;
+    }
+
+    private getXmlStateValue(state: TimelineChart.TimeGraphState): XmlViewStateValue | undefined {
+        const stateValues = this.getXmlViewMetadata()?.stateValues;
+        if (!stateValues?.length) {
+            return undefined;
+        }
+
+        const outputStyle = state.data?.style as OutputElementStyle | undefined;
+        const keys = new Set<string>();
+        if (outputStyle?.parentKey) {
+            keys.add(outputStyle.parentKey);
+            outputStyle.parentKey.split(',').forEach(key => keys.add(key));
+        }
+        if (state.label) {
+            keys.add(state.label);
+        }
+
+        return stateValues.find(stateValue => keys.has(stateValue.value));
+    }
+
+    private withXmlStateLabel(state: TimelineChart.TimeGraphState): TimelineChart.TimeGraphState {
+        const stateValue = this.getXmlStateValue(state);
+        if (!stateValue) {
+            return state;
+        }
+        return {
+            ...state,
+            label: stateValue.label
+        };
+    }
+
     private getStateStyle(state: TimelineChart.TimeGraphState) {
         const styleModel = this.state.styleModel;
         if (styleModel) {
@@ -1350,6 +1476,16 @@ export abstract class AbstractGanttOutputComponent<
     }
 
     private getDefaultStateStyle(state: TimelineChart.TimeGraphState) {
+        const xmlStateValue = this.getXmlStateValue(state);
+        if (xmlStateValue?.color) {
+            return {
+                color: convertColorStringToHexNumber(xmlStateValue.color),
+                height: this.props.style.rowHeight * 0.8,
+                borderWidth: state.selected ? 2 : 0,
+                borderColor: 0xeef20c
+            };
+        }
+
         const styleProvider = new StyleProvider(
             this.props.outputDescriptor.id,
             this.props.traceId,

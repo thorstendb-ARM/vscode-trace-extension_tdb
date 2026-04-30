@@ -33,6 +33,19 @@ export interface TreeState {
     xyTree: Entry[];
 }
 
+function getDataLeafEntryIds(entries: Entry[]): number[] {
+    const parentIds = new Set(entries.map(e => e.parentId).filter((id): id is number => id !== undefined));
+    return entries.filter(e => e.hasData && !parentIds.has(e.id)).map(e => e.id);
+}
+
+export function normalizeCheckedSeries(entries: Entry[], checkedSeries: number[]): number[] {
+    const dataLeafIds = new Set(getDataLeafEntryIds(entries));
+    if (dataLeafIds.size === 0) {
+        return checkedSeries;
+    }
+    return checkedSeries.filter(id => dataLeafIds.has(id));
+}
+
 function buildColumns(headers?: HeaderSpec[]): ColumnSpec[] {
     if (headers?.length) {
         return headers.map(h => ({
@@ -58,9 +71,12 @@ export function buildTreeStateFromModel(model: {
     entries: XyEntry[];
     autoExpandLevel?: number;
     status?: any;
-}): TreeState {
+}, selectDataLeafEntriesByDefault = false): TreeState {
     const columns = buildColumns(model.headers);
-    const checkedSeries = model.entries.filter(e => (e as any).isDefault).map(e => e.id);
+    let checkedSeries = model.entries.filter(e => (e as any).isDefault).map(e => e.id);
+    if (checkedSeries.length === 0 && selectDataLeafEntriesByDefault) {
+        checkedSeries = getDataLeafEntryIds(model.entries);
+    }
     const collapsedNodes = computeAutoCollapsedNodes(model.entries, columns, model.autoExpandLevel);
     const defaultOrderedIds = model.entries.map(e => e.id);
     return { columns, checkedSeries, collapsedNodes, defaultOrderedIds, xyTree: model.entries };

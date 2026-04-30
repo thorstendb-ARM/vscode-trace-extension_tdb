@@ -11,11 +11,15 @@ import {
     experimentSelected,
     setTspClient,
     alert,
-    info
+    info,
+    xmlViewMetadataUpdated
 } from 'vscode-trace-common/lib/messages/vscode-messages';
+import { XmlViewMetadataPayload } from 'traceviewer-base/lib/signals/xml-view-metadata';
 import { ClientType, getTspClientUrl } from 'vscode-trace-extension/src/utils/backend-tsp-client-provider';
 import { TraceViewerPanel } from '../../trace-viewer-panel/trace-viewer-webview-panel';
 import { AbstractTraceExplorerProvider } from '../abstract-trace-explorer-provider';
+import { TraceServerConnectionStatusService } from '../../utils/trace-server-status';
+import { Messenger } from 'vscode-messenger';
 export class TraceExplorerAvailableViewsProvider extends AbstractTraceExplorerProvider {
     public static readonly viewType = 'traceExplorer.availableViews';
     public readonly _webviewScript = 'analysisPanel.js';
@@ -29,11 +33,27 @@ export class TraceExplorerAvailableViewsProvider extends AbstractTraceExplorerPr
 
     private _selectionOngoing = false;
     private _selectedExperiment: Experiment | undefined;
+    private _xmlViewMetadata: XmlViewMetadataPayload = { views: [] };
+
+    constructor(
+        extensionUri: vscode.Uri,
+        statusService: TraceServerConnectionStatusService,
+        messenger: Messenger,
+        initialXmlViewMetadata: XmlViewMetadataPayload = { views: [] },
+        private readonly _loadXmlViewMetadata?: () => Promise<XmlViewMetadataPayload>
+    ) {
+        super(extensionUri, statusService, messenger);
+        this._xmlViewMetadata = initialXmlViewMetadata;
+    }
 
     // VSCODE message handlers
-    private _onVscodeWebviewReady = (): void => {
+    private _onVscodeWebviewReady = async (): Promise<void> => {
         // Post the tspTypescriptClient
         this._messenger.sendNotification(setTspClient, this._webviewParticipant, getTspClientUrl(ClientType.FRONTEND));
+        if (this._loadXmlViewMetadata) {
+            this._xmlViewMetadata = await this._loadXmlViewMetadata();
+        }
+        this._messenger.sendNotification(xmlViewMetadataUpdated, this._webviewParticipant, this._xmlViewMetadata);
         if (this._selectedExperiment !== undefined) {
             signalManager().emit('EXPERIMENT_SELECTED', this._selectedExperiment);
         }
@@ -76,6 +96,13 @@ export class TraceExplorerAvailableViewsProvider extends AbstractTraceExplorerPr
         vscode.window.showInformationMessage(text);
     };
 
+    private _onXmlViewMetadataUpdated = (payload: XmlViewMetadataPayload): void => {
+        this._xmlViewMetadata = payload;
+        if (this._view) {
+            this._messenger.sendNotification(xmlViewMetadataUpdated, this._webviewParticipant, payload);
+        }
+    };
+
     protected init(
         _webviewView: vscode.WebviewView,
         _context: vscode.WebviewViewResolveContext,
@@ -95,10 +122,12 @@ export class TraceExplorerAvailableViewsProvider extends AbstractTraceExplorerPr
         this._disposables.push(this._messenger.onNotification<string>(alert, this._onVscodeAlert, options));
         this._disposables.push(this._messenger.onNotification<string>(info, this._onVscodeInfo, options));
         signalManager().on('EXPERIMENT_SELECTED', this._onExperimentSelected);
+        signalManager().on('XML_VIEW_METADATA_UPDATED', this._onXmlViewMetadataUpdated);
     }
 
     protected dispose() {
         signalManager().off('EXPERIMENT_SELECTED', this._onExperimentSelected);
+        signalManager().off('XML_VIEW_METADATA_UPDATED', this._onXmlViewMetadataUpdated);
         this._disposables.forEach(disposable => disposable.dispose());
         super.dispose();
     }

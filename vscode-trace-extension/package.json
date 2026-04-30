@@ -101,8 +101,13 @@
             },
             {
                 "command": "openedTraces.openTrace",
-                "title": "Open Trace",
+                "title": "Open Trace or XML Analysis",
                 "icon": "$(new-folder)"
+            },
+            {
+                "command": "openedTraces.removeAllTraces",
+                "title": "Remove All Traces and XML Analyses",
+                "icon": "$(trash)"
             },
             {
                 "command": "trace-explorer.refreshContext",
@@ -195,12 +200,17 @@
                 {
                     "command": "openedTraces.openTrace",
                     "when": "view == traceExplorer.openedTracesView && !trace-explorer.noExperiments",
-                    "group": "navigation"
+                    "group": "navigation@1"
+                },
+                {
+                    "command": "openedTraces.removeAllTraces",
+                    "when": "view == traceExplorer.openedTracesView && traceViewer.serverUp",
+                    "group": "navigation@2"
                 },
                 {
                     "command": "trace-explorer.refreshContext",
                     "when": "view == welcome || view == traceExplorer.openedTracesView",
-                    "group": "navigation"
+                    "group": "navigation@3"
                 }
             ],
             "explorer/context": [

@@ -14,7 +14,12 @@ import {
     undoRedoHandler,
     zoomHandler,
     keyboardShortcutsHandler,
-    deleteExperiment
+    deleteExperiment,
+    deleteAllTracesAndXmlConfigurations,
+    getStoredXmlViewMetadata,
+    loadXmlViewMetadata,
+    openXmlAnalysisDialog,
+    xmlAnalysisHandler
 } from './trace-explorer/trace-utils';
 import { TraceServerConnectionStatusService } from './utils/trace-server-status';
 import {
@@ -69,7 +74,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extern
     const myAnalysisProvider = new TraceExplorerAvailableViewsProvider(
         context.extensionUri,
         serverStatusService,
-        messenger
+        messenger,
+        { views: getStoredXmlViewMetadata(context) },
+        async () => ({ views: await loadXmlViewMetadata(context) })
     );
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(TraceExplorerAvailableViewsProvider.viewType, myAnalysisProvider)
@@ -95,6 +102,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extern
 
     // TODO: For now, a different command opens traces from file explorer. Remove when we have a proper trace finder
     const fileOpenHandler = fileHandler();
+    const xmlOpenHandler = xmlAnalysisHandler(context);
     context.subscriptions.push(
         vscode.commands.registerCommand('traces.openTraceFile', async (file: vscode.Uri) => {
             let result = undefined;
@@ -219,14 +227,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extern
         vscode.commands.registerCommand('openedTraces.openTrace', async (resourceType?: ResourceType) => {
             let traceUri = undefined;
             if (resourceType && resourceType === 'File') {
-                traceUri = await openDialog(true);
+                traceUri = await openDialog(context, true);
             } else if (resourceType && resourceType === 'Folder') {
-                traceUri = await openDialog(false);
+                traceUri = await openDialog(context, false);
+            } else if (resourceType && resourceType === 'XML') {
+                traceUri = await openXmlAnalysisDialog(context);
             } else {
                 const type: ResourceType | undefined = await resourceTypeHandler.detectOrPromptForTraceResouceType();
                 if (!type) return;
-                const selectFiles = type === 'File' ? true : false;
-                traceUri = await openDialog(selectFiles);
+                traceUri = type === 'XML' ? await openXmlAnalysisDialog(context) : await openDialog(context, type === 'File');
+                resourceType = type;
             }
 
             if (!traceUri) {
@@ -234,9 +244,52 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extern
             }
             await startTraceServerIfAvailable(traceUri.fsPath);
             if (await isTraceServerUp()) {
+                if (resourceType === 'XML') {
+                    if (await xmlOpenHandler(traceUri)) {
+                        vscode.commands.executeCommand('trace-explorer.refreshContext');
+                    }
+                    return;
+                }
                 fileOpenHandler(context, traceUri);
                 serverStatusService.updateServerStatus(true);
                 vscode.commands.executeCommand('setContext', 'trace-explorer.noExperiments', false);
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('openedTraces.removeAllTraces', async () => {
+            const confirmation = await vscode.window.showWarningMessage(
+                'Remove all traces and XML analysis configurations from the trace server?',
+                { modal: true },
+                'Remove All'
+            );
+            if (confirmation !== 'Remove All') {
+                return;
+            }
+
+            if (!(await isTraceServerUp())) {
+                await serverStatusService.updateServerStatus(false);
+                vscode.window.showWarningMessage('Trace server is not available.');
+                return;
+            }
+
+            try {
+                await vscode.window.withProgress(
+                    {
+                        location: vscode.ProgressLocation.Notification,
+                        title: 'Removing all traces',
+                        cancellable: false
+                    },
+                    async () => {
+                        await deleteAllTracesAndXmlConfigurations(context);
+                    }
+                );
+                await serverStatusService.updateServerStatus(true);
+                vscode.commands.executeCommand('trace-explorer.refreshContext');
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                vscode.window.showErrorMessage(`Failed to remove all traces: ${message}`);
             }
         })
     );
@@ -253,6 +306,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extern
             if (tracesProvider) {
                 // Trigger webview refresh
                 tracesProvider.postMessagetoWebview(VSCODE_MESSAGES.TRACE_SERVER_STARTED, undefined);
+            }
+            if (myAnalysisProvider) {
+                myAnalysisProvider.postMessagetoWebview(VSCODE_MESSAGES.TRACE_SERVER_STARTED, undefined);
             }
             // Refresh so that either trace explorer or welcome page is rendered
             updateNoExperimentsContext();
@@ -275,6 +331,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extern
                 if (tracesProvider) {
                     // Trigger webview refresh
                     tracesProvider.postMessagetoWebview(VSCODE_MESSAGES.TRACE_SERVER_STARTED, undefined);
+                }
+                if (myAnalysisProvider) {
+                    myAnalysisProvider.postMessagetoWebview(VSCODE_MESSAGES.TRACE_SERVER_STARTED, undefined);
                 }
             }
         })

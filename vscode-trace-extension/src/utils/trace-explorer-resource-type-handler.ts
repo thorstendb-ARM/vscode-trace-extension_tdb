@@ -5,7 +5,7 @@
  ***************************************************************************************/
 import * as vscode from 'vscode';
 
-export type ResourceType = 'File' | 'Folder';
+export type ResourceType = 'File' | 'Folder' | 'XML';
 export type ResourceTypeQuickPickItem = vscode.QuickPickItem & { type: ResourceType };
 
 export class TraceExplorerResourceTypeHandler {
@@ -13,8 +13,9 @@ export class TraceExplorerResourceTypeHandler {
     private doHandleFiles = true;
     private doHandleFolders = true;
     private quickpickItems: ResourceTypeQuickPickItem[] = [
-        { label: 'File', type: 'File' },
-        { label: 'Folder', type: 'Folder' }
+        { label: 'File', description: 'Open a trace file', type: 'File' },
+        { label: 'Folder', description: 'Open a trace folder', type: 'Folder' },
+        { label: 'XML File', description: 'Load an XML data-driven analysis', type: 'XML' }
     ];
 
     private constructor() {
@@ -68,17 +69,19 @@ export class TraceExplorerResourceTypeHandler {
      * @returns TraceResourceType to be handled
      */
     async detectOrPromptForTraceResouceType(): Promise<ResourceType | undefined> {
-        // Try to figure out from context set
-        if (this.handleFiles() && !this.handleFolders()) {
-            return 'File';
-        } else if (!this.handleFiles() && this.handleFolders()) {
-            return 'Folder';
-        } else {
-            const selection = await vscode.window.showQuickPick(this.quickpickItems, {
-                title: 'Select the trace resource type to open'
-            });
-            if (!selection) return undefined;
-            return selection.type;
-        }
+        const items = this.quickpickItems.filter(item => {
+            if (item.type === 'File') {
+                return this.handleFiles();
+            }
+            if (item.type === 'Folder') {
+                return this.handleFolders();
+            }
+            return true;
+        });
+        const selection = await vscode.window.showQuickPick(items, {
+            title: 'Select what to open'
+        });
+        if (!selection) return undefined;
+        return selection.type;
     }
 }

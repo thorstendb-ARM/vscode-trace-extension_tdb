@@ -11,11 +11,14 @@ import { TreeNode } from '../components/utils/filter-tree/tree-node';
 import { getAllExpandedNodeIds } from '../components/utils/filter-tree/utils';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faPlus, faTimes } from '@fortawesome/free-solid-svg-icons';
+import { XmlViewMetadata } from 'traceviewer-base/lib/signals/xml-view-metadata';
+import { AvailableViewEntry, createAvailableViewEntries } from './available-view-tree';
 
 export interface ReactAvailableViewsProps {
     id: string;
     title: string;
     tspClientProvider: ITspClientProvider;
+    xmlViewMetadata?: XmlViewMetadata[];
     contextMenuRenderer?: (event: React.MouseEvent<HTMLDivElement>, output: OutputDescriptor) => void;
     onCustomizationClick?: (entry: OutputDescriptor, experiment: Experiment) => Promise<void>;
 }
@@ -37,6 +40,9 @@ export class ReactAvailableViewsWidget extends React.Component<ReactAvailableVie
     private _onExperimentSelected = (experiment?: Experiment): void =>
         this.doHandleExperimentSelectedSignal(experiment);
     private _onExperimentClosed = (experiment: Experiment): void => this.doHandleExperimentClosedSignal(experiment);
+    private _onTraceServerStarted = (): void => {
+        this.updateAvailableViews();
+    };
 
     constructor(props: ReactAvailableViewsProps) {
         super(props);
@@ -46,6 +52,7 @@ export class ReactAvailableViewsWidget extends React.Component<ReactAvailableVie
         });
         signalManager().on('EXPERIMENT_SELECTED', this._onExperimentSelected);
         signalManager().on('EXPERIMENT_CLOSED', this._onExperimentClosed);
+        signalManager().on('TRACE_SERVER_STARTED', this._onTraceServerStarted);
         this._nodeIdToOutput = {};
         this.state = { treeNodes: [], collapsedNodes: [], orderedNodes: [], selectedOutput: -1 };
         this.onToggleCollapse = this.onToggleCollapse.bind(this);
@@ -55,6 +62,13 @@ export class ReactAvailableViewsWidget extends React.Component<ReactAvailableVie
     componentWillUnmount(): void {
         signalManager().off('EXPERIMENT_SELECTED', this._onExperimentSelected);
         signalManager().off('EXPERIMENT_CLOSED', this._onExperimentClosed);
+        signalManager().off('TRACE_SERVER_STARTED', this._onTraceServerStarted);
+    }
+
+    componentDidUpdate(prevProps: ReactAvailableViewsProps): void {
+        if (prevProps.xmlViewMetadata !== this.props.xmlViewMetadata) {
+            this.updateAvailableViews();
+        }
     }
 
     render(): React.ReactNode {
@@ -95,6 +109,9 @@ export class ReactAvailableViewsWidget extends React.Component<ReactAvailableVie
 
     private doHandleOutputClicked(id: number) {
         const selectedOutput: OutputDescriptor = this._nodeIdToOutput[id];
+        if (!selectedOutput) {
+            return;
+        }
         this.setState({ selectedOutput: id });
         if (selectedOutput && this._selectedExperiment) {
             if (selectedOutput.type !== ProviderType.NONE) {
@@ -185,18 +202,23 @@ export class ReactAvailableViewsWidget extends React.Component<ReactAvailableVie
         // replace useless root "configurator" nodes with their
         // children, if any.
         list = this.filterList(list);
+        const entries = createAvailableViewEntries(list, {
+            xmlViewMetadata: this.props.xmlViewMetadata
+        });
         // Fill-in the lookup table
-        list.forEach((output, index) => {
-            const node: TreeNode = this.entryToTreeNode(output, idStringToNodeId);
+        entries.forEach((entry, index) => {
+            const node: TreeNode = this.entryToTreeNode(entry, idStringToNodeId);
             node.elementIndex = index;
-            lookup[output.id] = node;
-            this._nodeIdToOutput[node.id] = output;
+            lookup[entry.id] = node;
+            if (entry.output) {
+                this._nodeIdToOutput[node.id] = entry.output;
+            }
         });
         // Create the tree in the order it has been received
-        list.forEach(output => {
-            const node = lookup[output.id];
-            if (output.parentId !== undefined) {
-                const parent: TreeNode = lookup[output.parentId];
+        entries.forEach(entry => {
+            const node = lookup[entry.id];
+            if (entry.parentId !== undefined) {
+                const parent: TreeNode = lookup[entry.parentId];
                 if (parent) {
                     if (parent.id !== node.id) {
                         parent.children.push(node);
@@ -233,7 +255,7 @@ export class ReactAvailableViewsWidget extends React.Component<ReactAvailableVie
         return list;
     }
 
-    private entryToTreeNode(entry: OutputDescriptor, idStringToNodeId: { [key: string]: number }): TreeNode {
+    private entryToTreeNode(entry: AvailableViewEntry, idStringToNodeId: { [key: string]: number }): TreeNode {
         const id = idStringToNodeId[entry.id] ?? (idStringToNodeId[entry.id] = this._idGenerator++);
 
         let parentId = -1;
@@ -255,9 +277,16 @@ export class ReactAvailableViewsWidget extends React.Component<ReactAvailableVie
         return treeNode;
     }
 
-    private createEnrichedContent(entry: OutputDescriptor): (() => JSX.Element) | undefined {
+    private createEnrichedContent(entry: AvailableViewEntry): (() => JSX.Element) | undefined {
+        if (!entry.output) {
+            return undefined;
+        }
+        const output = entry.output;
         // Return undefined if no relevant capabilities or if customization is not supported
-        if ((!this.isOutputCustomizable(entry) && !this.isOutputDeletable(entry)) || !this.isCustomizationSupported()) {
+        if (
+            (!this.isOutputCustomizable(output) && !this.isOutputDeletable(output)) ||
+            !this.isCustomizationSupported()
+        ) {
             return undefined;
         }
 
@@ -269,18 +298,18 @@ export class ReactAvailableViewsWidget extends React.Component<ReactAvailableVie
             flexShrink: 1
         };
 
-        const useCustomizableUI = this.isOutputCustomizable(entry);
+        const useCustomizableUI = this.isOutputCustomizable(output);
 
         const EnrichedContent = (): JSX.Element => {
-            const displayName = useCustomizableUI ? entry.name : entry.configuration?.name;
+            const displayName = useCustomizableUI ? entry.name : output.configuration?.name;
 
             const buttonTitle = useCustomizableUI ? 'Add custom view...' : `Remove "${displayName}"`;
 
             const icon = useCustomizableUI ? faPlus : faTimes;
 
             const handleClick = useCustomizableUI
-                ? (e: React.MouseEvent) => this.handleCustomizeClick(entry, e)
-                : (e: React.MouseEvent) => this.handleDeleteClick(entry, e);
+                ? (e: React.MouseEvent) => this.handleCustomizeClick(output, e)
+                : (e: React.MouseEvent) => this.handleDeleteClick(output, e);
 
             return (
                 <>

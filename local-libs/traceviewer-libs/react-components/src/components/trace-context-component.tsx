@@ -425,29 +425,36 @@ export class TraceContextComponent extends React.Component<TraceContextProps, Tr
     }
 
     private handleTimeSelectionChange(range?: TimelineChart.TimeGraphRange) {
-        if (range) {
-            const t1 = range.start + this.state.timeOffset;
-            const t2 = range.end + this.state.timeOffset;
-
-            this.props.messageManager.addStatusMessage(this.TIME_SELECTION_STATUS_BAR_KEY, {
-                text: `T1: ${t1} T2: ${t2} Delta: ${t2 - t1}`,
-                category: Messages.MessageCategory.TRACE_CONTEXT
-            });
-
-            const { start, end } = range;
-            const payload = {
-                experimentUUID: this.props.experiment.UUID,
-                timeRange: new TimeRange(start, end)
-            } as TimeRangeUpdatePayload;
-            signalManager().emit('SELECTION_RANGE_UPDATED', payload);
-
-            this.setState(
-                prevState => ({
-                    currentTimeSelection: new TimeRange(range.start, range.end, prevState.timeOffset)
-                }),
-                () => this.updateHistory()
-            );
+        if (!range) {
+            this.props.messageManager.removeStatusMessage(this.TIME_SELECTION_STATUS_BAR_KEY);
+            signalManager().emit('SELECTION_RANGE_UPDATED', {
+                experimentUUID: this.props.experiment.UUID
+            } as TimeRangeUpdatePayload);
+            this.setState({ currentTimeSelection: undefined }, () => this.updateHistory());
+            return;
         }
+
+        const t1 = range.start + this.state.timeOffset;
+        const t2 = range.end + this.state.timeOffset;
+
+        this.props.messageManager.addStatusMessage(this.TIME_SELECTION_STATUS_BAR_KEY, {
+            text: `T1: ${t1} T2: ${t2} Delta: ${t2 - t1}`,
+            category: Messages.MessageCategory.TRACE_CONTEXT
+        });
+
+        const { start, end } = range;
+        const payload = {
+            experimentUUID: this.props.experiment.UUID,
+            timeRange: new TimeRange(start, end)
+        } as TimeRangeUpdatePayload;
+        signalManager().emit('SELECTION_RANGE_UPDATED', payload);
+
+        this.setState(
+            prevState => ({
+                currentTimeSelection: new TimeRange(range.start, range.end, prevState.timeOffset)
+            }),
+            () => this.updateHistory()
+        );
     }
 
     private handleViewRangeChange(oldRange: TimelineChart.TimeGraphRange, newRange: TimelineChart.TimeGraphRange) {
