@@ -230,15 +230,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extern
                 return;
             }
 
-            await startTraceServerIfAvailable(traceUri.fsPath);
-            if (!(await isTraceServerUp())) {
-                return;
-            }
-
             if (type === 'XML') {
+                // For XML imports, start the server without a trace-specific path so
+                // adopters whose isApplicable() validates real trace paths can still
+                // contribute a server (falling back to contributors with no validator).
+                await startTraceServerIfAvailable('');
+                if (!(await isTraceServerUp())) {
+                    return;
+                }
                 if (await xmlOpenHandler(traceUri)) {
                     await vscode.commands.executeCommand('trace-explorer.refreshContext');
                 }
+                return;
+            }
+
+            await startTraceServerIfAvailable(traceUri.fsPath);
+            if (!(await isTraceServerUp())) {
                 return;
             }
 
