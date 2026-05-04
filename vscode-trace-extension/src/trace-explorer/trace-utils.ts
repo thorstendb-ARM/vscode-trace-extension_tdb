@@ -350,8 +350,19 @@ async function deleteAllExperimentsAndTraces(extensionUri: vscode.Uri): Promise<
         await deleteExperiment(extensionUri, experiment.UUID, experiment);
     }
 
+    const traceIdsDeletedWithExperiments = new Set<string>();
+    for (const experiment of experiments) {
+        for (const trace of experiment.traces) {
+            traceIdsDeletedWithExperiments.add(trace.UUID);
+        }
+    }
+
     for (const trace of traces) {
+        if (traceIdsDeletedWithExperiments.has(trace.UUID)) {
+            continue;
+        }
         // TraceManager.deleteTrace is a no-op if the trace is unknown to the manager.
+        // Re-register traces that are not part of any deleted experiment before deleting.
         traceManager.addTrace(trace);
         await traceManager.deleteTrace(trace.UUID);
     }
