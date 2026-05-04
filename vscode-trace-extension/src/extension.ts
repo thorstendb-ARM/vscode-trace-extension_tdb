@@ -220,7 +220,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extern
 
     context.subscriptions.push(
         vscode.commands.registerCommand('openedTraces.openTrace', async (resourceType?: ResourceType) => {
-            const type = resourceType ?? (await resourceTypeHandler.detectOrPromptForTraceResouceType());
+            const type = resourceType ?? (await resourceTypeHandler.detectOrPromptForTraceResouceType(true));
             if (!type) {
                 return;
             }
@@ -230,22 +230,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extern
                 return;
             }
 
-            if (type === 'XML') {
-                // For XML imports, start the server without a trace-specific path so
-                // adopters whose isApplicable() validates real trace paths can still
-                // contribute a server (falling back to contributors with no validator).
-                await startTraceServerIfAvailable('');
-                if (!(await isTraceServerUp())) {
-                    return;
-                }
-                if (await xmlOpenHandler(traceUri)) {
-                    await vscode.commands.executeCommand('trace-explorer.refreshContext');
-                }
+            const traceServerPath = type === 'XML' ? '' : traceUri.fsPath;
+            // For XML imports, start the server without a trace-specific path so adopters whose
+            // isApplicable() validates real trace paths can still contribute a server.
+            await startTraceServerIfAvailable(traceServerPath);
+            if (!(await isTraceServerUp())) {
                 return;
             }
 
-            await startTraceServerIfAvailable(traceUri.fsPath);
-            if (!(await isTraceServerUp())) {
+            if (type === 'XML') {
+                if (await xmlOpenHandler(traceUri)) {
+                    await vscode.commands.executeCommand('trace-explorer.refreshContext');
+                }
                 return;
             }
 
