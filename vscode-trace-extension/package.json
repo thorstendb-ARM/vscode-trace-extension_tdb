@@ -204,7 +204,7 @@
                 },
                 {
                     "command": "openedTraces.removeAllTraces",
-                    "when": "view == traceExplorer.openedTracesView && !trace-explorer.noExperiments",
+                    "when": "(view == traceExplorer.openedTracesView && !trace-explorer.noExperiments) || (view == welcome && traceViewer.serverUp)",
                     "group": "navigation@2"
                 },
                 {
