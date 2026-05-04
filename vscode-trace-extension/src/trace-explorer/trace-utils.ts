@@ -1,16 +1,20 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import type { Configuration } from 'tsp-typescript-client/lib/models/configuration';
 import { Trace as TspTrace } from 'tsp-typescript-client/lib/models/trace';
 import { TraceViewerPanel } from '../trace-viewer-panel/trace-viewer-webview-panel';
 import {
+    ClientType,
     getExperimentManager,
     getTraceManager,
     getTspClient,
+    getTspClientUrl,
     updateNoExperimentsContext
 } from '../utils/backend-tsp-client-provider';
 import { messenger, traceLogger } from '../extension';
 import { KeyboardShortcutsPanel } from '../trace-viewer-panel/keyboard-shortcuts-panel';
 import { ConfigurationQuery, Experiment } from 'tsp-typescript-client';
+import { RestClient } from 'tsp-typescript-client/lib/protocol/rest-client';
 
 const LAST_OPEN_URI_KEY = 'traceExplorer.lastOpenUri';
 const XML_ANALYSIS_SOURCE_TYPE_ID = 'org.eclipse.tracecompass.tmf.core.config.xmlsourcetype';
@@ -111,8 +115,7 @@ export const xmlAnalysisHandler =
 
         const fileName = path.basename(filePath);
         const name = path.basename(filePath, path.extname(filePath));
-        const response = await getTspClient().createConfiguration(
-            XML_ANALYSIS_SOURCE_TYPE_ID,
+        const response = await createXmlAnalysisConfiguration(
             new ConfigurationQuery(name, `XML data-driven analysis: ${fileName}`, { path: filePath })
         );
 
@@ -128,6 +131,11 @@ export const xmlAnalysisHandler =
         );
         return true;
     };
+
+function createXmlAnalysisConfiguration(query: ConfigurationQuery) {
+    const url = `${getTspClientUrl(ClientType.BACKEND)}/config/types/${XML_ANALYSIS_SOURCE_TYPE_ID}/configs`;
+    return RestClient.post<Configuration>(url, query);
+}
 
 export const fileHandler =
     () =>
