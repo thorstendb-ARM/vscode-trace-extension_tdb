@@ -220,7 +220,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extern
 
     context.subscriptions.push(
         vscode.commands.registerCommand('openedTraces.openTrace', async (resourceType?: ResourceType) => {
-            const type = resourceType ?? (await resourceTypeHandler.detectOrPromptForTraceResouceType(true));
+            const type = resourceType ?? (await resourceTypeHandler.detectOrPromptForTraceResouceType());
             if (!type) {
                 return;
             }
