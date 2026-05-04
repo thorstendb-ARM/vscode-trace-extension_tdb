@@ -12,7 +12,7 @@ import { messenger, traceLogger } from '../extension';
 import { KeyboardShortcutsPanel } from '../trace-viewer-panel/keyboard-shortcuts-panel';
 import { ConfigurationQuery, Experiment } from 'tsp-typescript-client';
 
-const LAST_OPEN_PATH_KEY = 'traceExplorer.lastOpenPath';
+const LAST_OPEN_URI_KEY = 'traceExplorer.lastOpenUri';
 const XML_ANALYSIS_SOURCE_TYPE_ID = 'org.eclipse.tracecompass.tmf.core.config.xmlsourcetype';
 
 export type OpenDialogMode = 'File' | 'Folder' | 'XML';
@@ -387,8 +387,8 @@ async function deleteAllXmlConfigurations(): Promise<void> {
 }
 
 function getLastOpenUri(context: vscode.ExtensionContext): vscode.Uri | undefined {
-    const lastPath = context.globalState.get<string>(LAST_OPEN_PATH_KEY);
-    return lastPath ? vscode.Uri.file(lastPath) : undefined;
+    const lastUri = context.globalState.get<string>(LAST_OPEN_URI_KEY);
+    return lastUri ? vscode.Uri.parse(lastUri) : undefined;
 }
 
 async function updateLastOpenPath(
@@ -396,10 +396,11 @@ async function updateLastOpenPath(
     uri: vscode.Uri,
     selectedFile: boolean
 ): Promise<void> {
-    if (!uri.fsPath) {
+    if (!uri.path) {
         return;
     }
-    await context.globalState.update(LAST_OPEN_PATH_KEY, selectedFile ? path.dirname(uri.fsPath) : uri.fsPath);
+    const uriToStore = selectedFile ? vscode.Uri.joinPath(uri, '..') : uri;
+    await context.globalState.update(LAST_OPEN_URI_KEY, uriToStore.toString());
 }
 
 const rollbackTraces = async (
