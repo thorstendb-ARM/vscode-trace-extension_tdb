@@ -312,25 +312,53 @@ async function deleteAllExperimentsAndTraces(extensionUri: vscode.Uri): Promise<
     }
 
     const tspClient = getTspClient();
-    const { traceManager } = getManagers();
 
     const experimentsResponse = await tspClient.fetchExperiments();
-    if (experimentsResponse.isOk()) {
+    if (!experimentsResponse.isOk()) {
+        traceLogger.showError(
+            `Failed to fetch experiments (${experimentsResponse.getStatusCode()}): ${experimentsResponse.getStatusMessage()}`
+        );
+    } else {
         const experiments = experimentsResponse.getModel() ?? [];
-        // Note: managers' delete* methods mutate shared state, so do not parallelize.
         for (const experiment of experiments) {
-            await deleteExperiment(extensionUri, experiment.UUID, experiment);
+            await deleteExperimentFromServer(tspClient, experiment);
         }
     }
 
     const tracesResponse = await tspClient.fetchTraces();
-    if (tracesResponse.isOk()) {
+    if (!tracesResponse.isOk()) {
+        traceLogger.showError(
+            `Failed to fetch traces (${tracesResponse.getStatusCode()}): ${tracesResponse.getStatusMessage()}`
+        );
+    } else {
         const traces = tracesResponse.getModel() ?? [];
         for (const trace of traces) {
-            // Same workaround as in deleteExperiment: register before delete so the manager acts on it.
-            traceManager.addTrace(trace);
-            await traceManager.deleteTrace(trace.UUID);
+            await deleteTraceFromServer(tspClient, trace);
         }
+    }
+}
+
+async function deleteExperimentFromServer(
+    tspClient: ReturnType<typeof getTspClient>,
+    experiment: Experiment
+): Promise<void> {
+    const deleteResponse = await tspClient.deleteExperiment(experiment.UUID);
+    if (!deleteResponse.isOk() && deleteResponse.getStatusCode() !== 404) {
+        traceLogger.showError(
+            `Failed to delete experiment ${experiment.name} (${deleteResponse.getStatusCode()}): ${deleteResponse.getStatusMessage()}`
+        );
+    }
+}
+
+async function deleteTraceFromServer(
+    tspClient: ReturnType<typeof getTspClient>,
+    trace: TspTrace
+): Promise<void> {
+    const deleteResponse = await tspClient.deleteTrace(trace.UUID);
+    if (!deleteResponse.isOk() && deleteResponse.getStatusCode() !== 404) {
+        traceLogger.showError(
+            `Failed to delete trace ${trace.name} (${deleteResponse.getStatusCode()}): ${deleteResponse.getStatusMessage()}`
+        );
     }
 }
 
