@@ -2,11 +2,41 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { Trace as TspTrace } from 'tsp-typescript-client/lib/models/trace';
 import { TraceViewerPanel } from '../trace-viewer-panel/trace-viewer-webview-panel';
-import { getExperimentManager, getTraceManager } from '../utils/backend-tsp-client-provider';
-import { updateNoExperimentsContext } from '../utils/backend-tsp-client-provider';
+import {
+    getExperimentManager,
+    getTraceManager,
+    getTspClient,
+    updateNoExperimentsContext
+} from '../utils/backend-tsp-client-provider';
 import { messenger, traceLogger } from '../extension';
 import { KeyboardShortcutsPanel } from '../trace-viewer-panel/keyboard-shortcuts-panel';
-import { Experiment } from 'tsp-typescript-client';
+import { ConfigurationQuery, Experiment } from 'tsp-typescript-client';
+
+const LAST_OPEN_PATH_KEY = 'traceExplorer.lastOpenPath';
+const XML_ANALYSIS_SOURCE_TYPE_ID = 'org.eclipse.tracecompass.tmf.core.config.xmlsourcetype';
+
+export type OpenDialogMode = 'File' | 'Folder' | 'XML';
+export type ClearTraceServerScope = 'all' | 'experiments' | 'configurations';
+
+type ClearTraceServerQuickPickItem = vscode.QuickPickItem & { scope: ClearTraceServerScope };
+
+const CLEAR_TRACE_SERVER_ITEMS: ClearTraceServerQuickPickItem[] = [
+    {
+        label: 'All Experiments and Configurations',
+        description: 'Remove all experiments, traces, and XML configurations from the trace server',
+        scope: 'all'
+    },
+    {
+        label: 'Experiments',
+        description: 'Remove all experiments and traces from the trace server',
+        scope: 'experiments'
+    },
+    {
+        label: 'Configurations',
+        description: 'Remove all XML analysis configurations from the trace server',
+        scope: 'configurations'
+    }
+];
 
 // eslint-disable-next-line no-shadow
 export enum ProgressMessages {
@@ -37,20 +67,67 @@ export const zoomHandler = (hasZoomedIn: boolean): void => {
     TraceViewerPanel.zoomOnCurrent(hasZoomedIn);
 };
 
-export const openDialog = async (selectFiles = false): Promise<vscode.Uri | undefined> => {
-    const props: vscode.OpenDialogOptions = {
-        title: selectFiles ? 'Open Trace File' : 'Open Trace Folder',
-        canSelectFolders: !selectFiles,
-        canSelectFiles: selectFiles,
-        canSelectMany: false
+/**
+ * Show an open dialog for traces or XML analyses.
+ *
+ * Remembers the last selected location in `globalState` and uses it as `defaultUri`
+ * the next time the dialog is opened.
+ */
+export const openDialog = async (
+    mode: OpenDialogMode,
+    context: vscode.ExtensionContext
+): Promise<vscode.Uri | undefined> => {
+    const isFile = mode !== 'Folder';
+    const titles: Record<OpenDialogMode, string> = {
+        File: 'Open Trace File',
+        Folder: 'Open Trace Folder',
+        XML: 'Open XML Analysis'
     };
-    let traceURI = undefined;
-    traceURI = await vscode.window.showOpenDialog(props);
-    if (traceURI && traceURI[0]) {
-        return traceURI[0];
+    const props: vscode.OpenDialogOptions = {
+        title: titles[mode],
+        canSelectFiles: isFile,
+        canSelectFolders: !isFile,
+        canSelectMany: false,
+        defaultUri: getLastOpenUri(context),
+        ...(mode === 'XML' ? { filters: { 'XML files': ['xml'] } } : {})
+    };
+    const selection = await vscode.window.showOpenDialog(props);
+    const uri = selection?.[0];
+    if (!uri) {
+        return undefined;
     }
-    return undefined;
+    await updateLastOpenPath(context, uri, isFile);
+    return uri;
 };
+
+export const xmlAnalysisHandler =
+    () =>
+    async (xmlUri: vscode.Uri): Promise<boolean> => {
+        const filePath = xmlUri.fsPath;
+        if (!filePath) {
+            traceLogger.showError('Cannot load XML analysis: could not retrieve path from URI for ' + xmlUri);
+            return false;
+        }
+
+        const fileName = path.basename(filePath);
+        const name = path.basename(filePath, path.extname(filePath));
+        const response = await getTspClient().createConfiguration(
+            XML_ANALYSIS_SOURCE_TYPE_ID,
+            new ConfigurationQuery(name, `XML data-driven analysis: ${fileName}`, { path: filePath })
+        );
+
+        if (!response.isOk()) {
+            traceLogger.showError(
+                `Failed to load XML analysis (${response.getStatusCode()}): ${response.getStatusMessage()}`
+            );
+            return false;
+        }
+
+        vscode.window.showInformationMessage(
+            `Loaded XML analysis: ${fileName}. Open traces after loading XML for the analysis to be available.`
+        );
+        return true;
+    };
 
 export const fileHandler =
     () =>
@@ -165,7 +242,11 @@ export const fileHandler =
         );
     };
 
-export const deleteExperiment = async (extensionUri: vscode.Uri, uuid: string) => {
+export const deleteExperiment = async (
+    extensionUri: vscode.Uri,
+    uuid: string,
+    experiment?: Experiment
+): Promise<void> => {
     // dispose any open panels associated with the experiment
     for (const key of Object.keys(TraceViewerPanel.activePanels)) {
         const panel = TraceViewerPanel.activePanels[key];
@@ -176,8 +257,122 @@ export const deleteExperiment = async (extensionUri: vscode.Uri, uuid: string) =
     }
     // remove experiment from the experiment manager
     const experimentManager = getManagers().experimentManager;
-    experimentManager.deleteExperiment(uuid);
+    // ExperimentManager.deleteExperiment is a no-op if the experiment is not in its internal
+    // map (e.g. after a reload, or when triggered for an experiment fetched directly via tspClient).
+    // Re-register it first so the manager actually issues the delete and emits EXPERIMENT_DELETED.
+    const experimentToDelete = experiment ?? (await experimentManager.getExperiment(uuid));
+    if (experimentToDelete) {
+        experimentManager.addExperiment(experimentToDelete);
+    }
+    await experimentManager.deleteExperiment(uuid);
 };
+
+/**
+ * Prompt the user to pick a clear scope, confirm, and run {@link clearTraceServer} with progress UI.
+ */
+export const promptAndClearTraceServer = async (extensionUri: vscode.Uri): Promise<boolean> => {
+    const selection = await vscode.window.showQuickPick(CLEAR_TRACE_SERVER_ITEMS, { title: 'Clear Trace Server' });
+    if (!selection) {
+        return false;
+    }
+
+    const confirmed = await vscode.window.showWarningMessage(
+        `Remove ${selection.label.toLowerCase()} from the trace server?`,
+        { modal: true },
+        selection.label
+    );
+    if (confirmed !== selection.label) {
+        return false;
+    }
+
+    await vscode.window.withProgress(
+        {
+            location: vscode.ProgressLocation.Notification,
+            title: `Clear Trace Server: ${selection.label}`,
+            cancellable: false
+        },
+        () => clearTraceServer(extensionUri, selection.scope)
+    );
+    return true;
+};
+
+export const clearTraceServer = async (extensionUri: vscode.Uri, scope: ClearTraceServerScope): Promise<void> => {
+    if (scope === 'all' || scope === 'experiments') {
+        await deleteAllExperimentsAndTraces(extensionUri);
+    }
+    if (scope === 'all' || scope === 'configurations') {
+        await deleteAllXmlConfigurations();
+    }
+    await updateNoExperimentsContext();
+};
+
+async function deleteAllExperimentsAndTraces(extensionUri: vscode.Uri): Promise<void> {
+    for (const key of Object.keys(TraceViewerPanel.activePanels)) {
+        TraceViewerPanel.disposePanel(extensionUri, key);
+    }
+
+    const tspClient = getTspClient();
+    const { traceManager } = getManagers();
+
+    const experimentsResponse = await tspClient.fetchExperiments();
+    if (experimentsResponse.isOk()) {
+        const experiments = experimentsResponse.getModel() ?? [];
+        // Note: managers' delete* methods mutate shared state, so do not parallelize.
+        for (const experiment of experiments) {
+            await deleteExperiment(extensionUri, experiment.UUID, experiment);
+        }
+    }
+
+    const tracesResponse = await tspClient.fetchTraces();
+    if (tracesResponse.isOk()) {
+        const traces = tracesResponse.getModel() ?? [];
+        for (const trace of traces) {
+            // Same workaround as in deleteExperiment: register before delete so the manager acts on it.
+            traceManager.addTrace(trace);
+            await traceManager.deleteTrace(trace.UUID);
+        }
+    }
+}
+
+async function deleteAllXmlConfigurations(): Promise<void> {
+    const tspClient = getTspClient();
+    const response = await tspClient.fetchConfigurations(XML_ANALYSIS_SOURCE_TYPE_ID);
+    if (!response.isOk()) {
+        if (response.getStatusCode() !== 404) {
+            traceLogger.showError(
+                `Failed to fetch XML analyses (${response.getStatusCode()}): ${response.getStatusMessage()}`
+            );
+        }
+        return;
+    }
+    const configurations = response.getModel() ?? [];
+    await Promise.all(
+        configurations.map(async ({ id }) => {
+            const deleteResponse = await tspClient.deleteConfiguration(XML_ANALYSIS_SOURCE_TYPE_ID, id);
+            if (!deleteResponse.isOk() && deleteResponse.getStatusCode() !== 404) {
+                traceLogger.showError(
+                    `Failed to delete XML analysis ${id} (${deleteResponse.getStatusCode()}): ${deleteResponse.getStatusMessage()}`
+                );
+            }
+        })
+    );
+}
+
+function getLastOpenUri(context: vscode.ExtensionContext): vscode.Uri | undefined {
+    const lastPath = context.globalState.get<string>(LAST_OPEN_PATH_KEY);
+    return lastPath ? vscode.Uri.file(lastPath) : undefined;
+}
+
+async function updateLastOpenPath(
+    context: vscode.ExtensionContext,
+    uri: vscode.Uri,
+    selectedFile: boolean
+): Promise<void> {
+    if (!uri.fsPath) {
+        return;
+    }
+    await context.globalState.update(LAST_OPEN_PATH_KEY, selectedFile ? path.dirname(uri.fsPath) : uri.fsPath);
+}
 
 const rollbackTraces = async (
     traces: Array<TspTrace>,
