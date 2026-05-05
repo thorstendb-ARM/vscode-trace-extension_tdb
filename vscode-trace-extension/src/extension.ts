@@ -252,7 +252,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extern
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('openedTraces.removeAllTraces', async () => {
+        vscode.commands.registerCommand('openedTraces.clearTraceServer', async () => {
             if (!(await isTraceServerUp())) {
                 vscode.window.showWarningMessage('Trace server is not running.');
                 return;

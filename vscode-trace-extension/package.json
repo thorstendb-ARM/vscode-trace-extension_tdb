@@ -105,7 +105,7 @@
                 "icon": "$(new-folder)"
             },
             {
-                "command": "openedTraces.removeAllTraces",
+                "command": "openedTraces.clearTraceServer",
                 "title": "Clear Trace Server",
                 "icon": "$(trash)"
             },
@@ -203,7 +203,7 @@
                     "group": "navigation@1"
                 },
                 {
-                    "command": "openedTraces.removeAllTraces",
+                    "command": "openedTraces.clearTraceServer",
                     "when": "(view == traceExplorer.openedTracesView && !trace-explorer.noExperiments) || (view == welcome && traceViewer.serverUp)",
                     "group": "navigation@2"
                 },
