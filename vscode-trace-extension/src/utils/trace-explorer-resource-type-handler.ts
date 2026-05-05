@@ -80,7 +80,7 @@ export class TraceExplorerResourceTypeHandler {
         } else if (!this.handleFiles() && this.handleFolders()) {
             quickpickItems = this.quickpickItems.filter(item => item.type === 'Folder');
         }
-        if (includeXml) {
+        if (includeXml && this.handleFiles()) {
             quickpickItems = [...quickpickItems, this.xmlQuickpickItem];
         }
         if (quickpickItems.length === 1) {

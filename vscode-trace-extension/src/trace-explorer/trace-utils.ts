@@ -332,15 +332,15 @@ async function deleteAllExperimentsAndTraces(extensionUri: vscode.Uri): Promise<
     }
 
     const tracesResponse = await tspClient.fetchTraces();
-    if (!tracesResponse.isOk()) {
+    const tracesAvailable = tracesResponse.isOk();
+    if (!tracesAvailable) {
         traceLogger.showError(
             `Failed to fetch traces (${tracesResponse.getStatusCode()}): ${tracesResponse.getStatusMessage()}`
         );
-        return;
     }
 
     const experiments = experimentsResponse.getModel() ?? [];
-    const traces = tracesResponse.getModel() ?? [];
+    const traces = tracesAvailable ? (tracesResponse.getModel() ?? []) : [];
 
     for (const key of Object.keys(TraceViewerPanel.activePanels)) {
         TraceViewerPanel.disposePanel(extensionUri, key);
@@ -350,21 +350,23 @@ async function deleteAllExperimentsAndTraces(extensionUri: vscode.Uri): Promise<
         await deleteExperiment(extensionUri, experiment.UUID, experiment);
     }
 
-    const traceIdsDeletedWithExperiments = new Set<string>();
-    for (const experiment of experiments) {
-        for (const trace of experiment.traces) {
-            traceIdsDeletedWithExperiments.add(trace.UUID);
+    if (tracesAvailable) {
+        const traceIdsDeletedWithExperiments = new Set<string>();
+        for (const experiment of experiments) {
+            for (const trace of experiment.traces) {
+                traceIdsDeletedWithExperiments.add(trace.UUID);
+            }
         }
-    }
 
-    for (const trace of traces) {
-        if (traceIdsDeletedWithExperiments.has(trace.UUID)) {
-            continue;
+        for (const trace of traces) {
+            if (traceIdsDeletedWithExperiments.has(trace.UUID)) {
+                continue;
+            }
+            // TraceManager.deleteTrace is a no-op if the trace is unknown to the manager.
+            // Re-register traces that are not part of any deleted experiment before deleting.
+            traceManager.addTrace(trace);
+            await traceManager.deleteTrace(trace.UUID);
         }
-        // TraceManager.deleteTrace is a no-op if the trace is unknown to the manager.
-        // Re-register traces that are not part of any deleted experiment before deleting.
-        traceManager.addTrace(trace);
-        await traceManager.deleteTrace(trace.UUID);
     }
 }
 
