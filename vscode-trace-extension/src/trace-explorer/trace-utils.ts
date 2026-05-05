@@ -342,10 +342,6 @@ async function deleteAllExperimentsAndTraces(extensionUri: vscode.Uri): Promise<
     const experiments = experimentsResponse.getModel() ?? [];
     const traces = tracesAvailable ? (tracesResponse.getModel() ?? []) : [];
 
-    for (const key of Object.keys(TraceViewerPanel.activePanels)) {
-        TraceViewerPanel.disposePanel(extensionUri, key);
-    }
-
     for (const experiment of experiments) {
         await deleteExperiment(extensionUri, experiment.UUID, experiment);
     }

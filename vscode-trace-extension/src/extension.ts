@@ -239,9 +239,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extern
             }
 
             if (type === 'XML') {
-                await xmlOpenHandler(traceUri);
-                serverStatusService.updateServerStatus(true);
-                await vscode.commands.executeCommand('trace-explorer.refreshContext');
+                if (await xmlOpenHandler(traceUri)) {
+                    await serverStatusService.updateServerStatus(true);
+                    await vscode.commands.executeCommand('trace-explorer.refreshContext');
+                }
                 return;
             }
 
